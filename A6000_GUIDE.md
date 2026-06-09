@@ -1,11 +1,52 @@
 # Search-R1 A6000 (48GB显存) 优化配置指南
 
+> **专业重构版** - 使用模块化脚本和配置文件，提供更好的可维护性和专业性
+
+## 🚀 快速开始（5分钟）
+
+```bash
+# 1. 验证环境
+python scripts/verify_gpu.py
+
+# 2. 准备数据
+python scripts/data_prepare.py --output_dir data/nq_search
+
+# 3. 下载索引
+python scripts/download_index.py --output_dir data/index
+
+# 4. 启动检索器
+bash scripts/start_retriever.sh
+
+# 5. 开始训练
+bash scripts/train_a6000.sh
+```
+
 ## 📚 目录
 - [1. A6000硬件优势](#1-a6000硬件优势)
 - [2. 推荐配置方案](#2-推荐配置方案)
 - [3. 快速启动脚本](#3-快速启动脚本)
 - [4. 性能基准](#4-性能基准)
 - [5. 高级优化](#5-高级优化)
+- [6. 监控与调试](#6-监控与调试)
+- [7. 一键启动脚本](#7-一键启动脚本)
+- [8. 性能预期](#8-性能预期)
+- [9. 推理测试](#9-推理测试)
+- [10. 总结](#10-总结)
+- [11. 故障排查](#11-故障排查)
+
+## 📝 新增章节说明
+
+本次重构新增了以下专业化的内容结构：
+
+- **3.1节**: 环境准备使用GPU验证脚本
+- **3.2节**: 数据准备使用专业Python脚本
+- **3.3节**: 索引下载使用专业下载脚本
+- **3.4节**: 检索器启动使用专业Shell脚本
+- **3.5节**: 训练使用YAML配置文件
+- **10.1节**: 新增重构改进说明
+- **10.2节**: 新增文件结构说明
+
+---
 
 ---
 
@@ -87,19 +128,14 @@ pip install hydra-core
 pip install wandb
 pip install accelerate
 pip install flash-attn --no-build-isolation
+pip install huggingface_hub
 
 # ===== 安装veRL框架 =====
 cd /path/to/Search-R1
 pip install -e .
 
 # ===== 验证安装 =====
-python -c "
-import torch
-print(f'PyTorch: {torch.__version__}')
-print(f'CUDA: {torch.cuda.is_available()}')
-print(f'GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"无GPU\"}')
-print(f'显存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB' if torch.cuda.is_available() else '')
-"
+python scripts/verify_gpu.py
 ```
 
 ### 3.2 数据准备（完整NQ数据集）
@@ -107,63 +143,22 @@ print(f'显存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f}
 ```bash
 # ===== 创建数据目录 =====
 mkdir -p data/nq_search
-cd data/nq_search
 
-# ===== 处理完整NQ数据集 =====
-python -c "
-import datasets
-from datasets import load_dataset
-import json
-import re
+# ===== 使用专业数据准备脚本 =====
+python scripts/data_prepare.py --output_dir data/nq_search
+```
 
-def make_prefix(question):
-    return f'''Answer the given question. \
-You must conduct reasoning inside <think and  first every time you get new information. \
-After reasoning, if you find you lack some knowledge, you can call a search engine by <search> query </search> and it will return the top searched results between <information> and </information>. \
-You can search as many times as your want. \
-If you find no further external knowledge needed, you can directly provide the answer inside <answer> and </answer>, without detailed illustrations. For example, <answer> Beijing </answer>. Question: {question}
-'''
+**数据准备脚本说明：**
+- 📥 从HuggingFace Hub自动下载NQ数据集
+- 🔄 转换为Search-R1训练格式
+- 💾 保存为JSON Lines格式
+- 📊 显示数据统计信息
 
-dataset = load_dataset('RUC-NLPIR/FlashRAG_datasets', 'nq')
-
-train_dataset = dataset['train']
-test_dataset = dataset['test']
-
-def process_fn(example, idx):
-    question = example['question'].strip()
-    if question[-1] != '?':
-        question += '?'
-    
-    question = make_prefix(question)
-    
-    data = {
-        'data_source': 'nq',
-        'prompt': [{'role': 'user', 'content': question}],
-        'ability': 'fact-reasoning',
-        'reward_model': {
-            'style': 'rule',
-            'ground_truth': {'target': example['golden_answers']}
-        },
-        'extra_info': {'split': 'train', 'index': idx}
-    }
-    return data
-
-train_dataset = train_dataset.map(process_fn, with_indices=True)
-test_dataset = test_dataset.map(process_fn, with_indices=True)
-
-# 保存为简化JSON格式
-with open('train.json', 'w') as f:
-    for item in train_dataset:
-        f.write(json.dumps(item, ensure_ascii=False) + '\n')
-
-with open('test.json', 'w') as f:
-    for item in test_dataset:
-        f.write(json.dumps(item, ensure_ascii=False) + '\n')
-
-print(f'数据准备完成！')
-print(f'训练集: {len(train_dataset)} 样本')
-print(f'测试集: {len(test_dataset)} 样本')
-"
+**输出结构：**
+```
+data/nq_search/
+├── train.json    # ~3000个训练样本
+└── test.json     # ~3000个测试样本
 ```
 
 ### 3.3 检索器准备（真实E5检索）
@@ -177,48 +172,21 @@ conda activate retriever_a6000
 pip install torch==2.4.0 --index-url https://download.pytorch.org/whl/cu121
 pip install transformers datasets pyserini
 
-# ===== 下载预构建索引 =====
-mkdir -p data/index
-cd data/index
+# ===== 使用专业索引下载脚本 =====
+python scripts/download_index.py --output_dir data/index
+```
 
-# 下载E5-Flat索引 (高质量密集检索)
-python -c "
-from huggingface_hub import hf_hub_download
-import os
+**索引下载脚本说明：**
+- 📥 从HuggingFace Hub下载预构建E5索引
+- 📦 自动下载Wikipedia-18语料库
+- 🔧 自动解压和文件整理
+- ✅ 完整性检查
 
-os.chdir('data/index')
-
-# 下载索引文件
-hf_hub_download(
-    repo_id='PeterJinGo/wiki-18-e5-index',
-    filename='part_aa',
-    repo_type='dataset'
-)
-
-hf_hub_download(
-    repo_id='PeterJinGo/wiki-18-corpus',
-    filename='wiki-18.jsonl.gz',
-    repo_type='dataset'
-)
-
-import gzip
-import shutil
-
-# 合并索引
-with open('e5_Flat.index', 'wb') as f_out:
-    for file in ['part_aa']:
-        with open(file, 'rb') as f_in:
-            shutil.copyfileobj(f_in, f_out)
-
-# 解压语料
-with gzip.open('wiki-18.jsonl.gz', 'rb') as f_in:
-    with open('wiki-18.jsonl', 'wb') as f_out:
-        shutil.copyfileobj(f_in, f_out)
-
-print('索引下载完成！')
-print('索引文件: data/index/e5_Flat.index')
-print('语料文件: data/index/wiki-18.jsonl')
-"
+**输出结构：**
+```
+data/index/
+├── e5_Flat.index     # E5检索索引 (~1GB)
+└── wiki-18.jsonl     # Wikipedia语料 (~500MB)
 ```
 
 ### 3.4 启动E5检索服务器
@@ -228,98 +196,68 @@ print('语料文件: data/index/wiki-18.jsonl')
 conda activate retriever_a6000
 cd /path/to/Search-R1
 
-# 启动检索服务器（使用A6000的GPU加速）
-python search_r1/search/retrieval_server.py \
-    --index_path data/index/e5_Flat.index \
-    --corpus_path data/index/wiki-18.jsonl \
-    --retriever_name e5 \
-    --retriever_model intfloat/e5-base-v2 \
-    --topk 3 \
-    --faiss_gpu \
-    2>&1 | tee retriever_a6000.log
+# ===== 使用专业检索服务器脚本 =====
+bash scripts/start_retriever.sh
 ```
+
+**检索服务器脚本说明：**
+- 🔍 自动检查索引文件和端口占用
+- 🚀 启动GPU加速的E5检索服务
+- 📊 提供详细状态信息
+- 📝 自动记录日志
+
+**服务信息：**
+- URL: `http://127.0.0.1:8000/retrieve`
+- 日志: `logs/retriever.log`
+- 支持GPU加速（FAISS GPU）
 
 ### 3.5 A6000优化训练脚本
 
 ```bash
-# ===== 创建A6000专用训练脚本 =====
+# ===== 使用专业训练脚本 =====
 cd /path/to/Search-R1
+bash scripts/train_a6000.sh
+```
 
-cat > train_a6000.sh << 'EOF'
-#!/bin/bash
+**训练脚本说明：**
+- 📝 使用YAML配置文件 (`configs/a6000_grpo.yaml`)
+- 🔍 自动检查前置条件（GPU、数据、检索器）
+- 📊 提供详细的配置信息和性能预期
+- 📁 自动管理日志和检查点目录
 
-# ========== A6000优化配置 ==========
-export CUDA_VISIBLE_DEVICES=0
-export DATA_DIR='data/nq_search'
-export BASE_MODEL='Qwen/Qwen2.5-7B'
-export EXPERIMENT_NAME='a6000-nq-search-r1-grpo-qwen2.5-7b'
+**配置文件结构：**
+```yaml
+# configs/a6000_grpo.yaml
+data:
+  train_batch_size: 16
+  max_prompt_length: 2048
 
-echo "🚀 开始A6000优化训练..."
-echo "📊 硬件: A6000 (48GB显存)"
-echo "🤖 模型: Qwen2.5-7B"
-echo "🔧 算法: GRPO"
-echo "📈 显存预期: ~38-42GB"
-echo "⏱️  预计时间: 4-5小时"
-echo ""
+algorithm:
+  adv_estimator: grpo
 
-# ========== A6000优化的GRPO训练 ==========
-PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
-    data.train_files=$DATA_DIR/train.json \
-    data.val_files=$DATA_DIR/test.json \
-    data.train_batch_size=16 \
-    data.val_batch_size=8 \
-    data.max_prompt_length=2048 \
-    data.max_response_length=512 \
-    data.max_start_length=1024 \
-    data.max_obs_length=512 \
-    data.shuffle_train_dataloader=True \
-    \
-    algorithm.adv_estimator=grpo \
-    \
-    actor_rollout_ref.model.path=$BASE_MODEL \
-    actor_rollout_ref.actor.optim.lr=1e-6 \
-    actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.2 \
-    \
-    actor_rollout_ref.actor.ppo_mini_batch_size=16 \
-    actor_rollout_ref.actor.ppo_micro_batch_size=4 \
-    actor_rollout_ref.actor.fsdp_config.param_offload=false \
-    actor_rollout_ref.actor.fsdp_config.grad_offload=true \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=true \
-    actor_rollout_ref.actor.use_remove_padding=True \
-    actor_rollout_ref.actor.state_masking=true \
-    \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size=16 \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-    actor_rollout_ref.rollout.name=vllm \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.85 \
-    actor_rollout_ref.rollout.n_agent=5 \
-    actor_rollout_ref.rollout.temperature=1.0 \
-    \
-    actor_rollout_ref.ref.log_prob_micro_batch_size=16 \
-    \
-    trainer.n_gpus_per_node=1 \
-    trainer.nnodes=1 \
-    trainer.save_freq=50 \
-    trainer.test_freq=25 \
-    trainer.logger=['wandb'] \
-    trainer.project_name='Search-R1-A6000' \
-    trainer.experiment_name=$EXPERIMENT_NAME \
-    trainer.total_epochs=5 \
-    trainer.total_training_steps=500 \
-    trainer.default_local_dir=checkpoints/$EXPERIMENT_NAME \
-    \
-    max_turns=2 \
-    retriever.url="http://127.0.0.1:8000/retrieve" \
-    retriever.topk=3 \
-    2>&1 | tee $EXPERIMENT_NAME.log
+actor_rollout_ref:
+  model:
+    path: Qwen/Qwen2.5-7B
+  rollout:
+    n_agent: 5
+    gpu_memory_utilization: 0.85
 
-echo ""
-echo "🎉 训练完成！"
-echo "📊 查看日志: cat $EXPERIMENT_NAME.log"
-echo "📁 检查点: ls checkpoints/$EXPERIMENT_NAME/"
-EOF
+trainer:
+  total_training_steps: 500
+  experiment_name: a6000-nq-search-r1-grpo-qwen2.5-7b
+```
 
-chmod +x train_a6000.sh
+**输出结构：**
+```
+logs/
+└── a6000-nq-search-r1-grpo-qwen2.5-7b.log
+
+checkpoints/
+└── a6000-nq-search-r1-grpo-qwen2.5-7b/
+    ├── actor/
+    ├── checkpoint_50/
+    ├── checkpoint_100/
+    └── ...
 ```
 
 ---
@@ -386,122 +324,33 @@ A6000 48GB显存刚好够用，有少量余量
 
 ```bash
 # ===== 激进配置：使用完整PPO算法 =====
-cat > train_a6000_ppo.sh << 'EOF'
-#!/bin/bash
-
-export CUDA_VISIBLE_DEVICES=0
-export BASE_MODEL='Qwen/Qwen2.5-7B'
-export EXPERIMENT_NAME='a6000-nq-search-r1-ppo-qwen2.5-7b'
-
-PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
-    data.train_files=data/nq_search/train.json \
-    data.val_files=data/nq_search/test.json \
-    data.train_batch_size=16 \
-    data.val_batch_size=8 \
-    data.max_prompt_length=2048 \
-    data.max_response_length=512 \
-    data.max_start_length=1024 \
-    data.max_obs_length=512 \
-    \
-    algorithm.adv_estimator=gae \
-    algorithm.kl_ctrl.kl_coef=0.001 \
-    \
-    actor_rollout_ref.model.path=$BASE_MODEL \
-    actor_rollout_ref.actor.optim.lr=1e-6 \
-    actor_rollout_ref.actor.ppo_mini_batch_size=16 \
-    actor_rollout_ref.actor.ppo_micro_batch_size=4 \
-    actor_rollout_ref.actor.fsdp_config.param_offload=false \
-    actor_rollout_ref.actor.fsdp_config.grad_offload=true \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=true \
-    actor_rollout_ref.actor.state_masking=true \
-    \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size=16 \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-    actor_rollout_ref.rollout.name=vllm \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.85 \
-    actor_rollout_ref.rollout.n_agent=1 \
-    actor_rollout_ref.rollout.temperature=1.0 \
-    \
-    actor_rollout_ref.ref.log_prob_micro_batch_size=16 \
-    \
-    critic.optim.lr=5e-6 \
-    critic.model.path=$BASE_MODEL \
-    critic.model.use_remove_padding=true \
-    critic.ppo_micro_batch_size=4 \
-    critic.model.fsdp_config.param_offload=true \
-    critic.model.fsdp_config.grad_offload=true \
-    critic.model.fsdp_config.optimizer_offload=true \
-    \
-    trainer.critic_warmup=5 \
-    trainer.n_gpus_per_node=1 \
-    trainer.total_training_steps=500 \
-    trainer.total_epochs=10 \
-    \
-    max_turns=2 \
-    retriever.url="http://127.0.0.1:8000/retrieve" \
-    retriever.topk=3 \
-    2>&1 | tee $EXPERIMENT_NAME.log
-
-echo "PPO训练完成！"
-EOF
-
-chmod +x train_a6000_ppo.sh
+python3 -m verl.trainer.main_ppo --config configs/a6000_ppo.yaml
 ```
+
+**配置说明 (`configs/a6000_ppo.yaml`)：**
+- 🤖 使用完整PPO算法（带Critic网络）
+- 🎯 更精确的价值估计
+- 💾 更高的显存占用 (~45GB)
+- ⏱️ 更长的训练时间 (6-8小时)
 
 ### 5.2 方案2：保守方案（3B + 超大batch）
 
 ```bash
 # ===== 保守配置：使用3B模型但超大batch =====
-cat > train_a6000_large_batch.sh << 'EOF'
-#!/bin/bash
-
-export CUDA_VISIBLE_DEVICES=0
-export BASE_MODEL='Qwen/Qwen2.5-3B'
-export EXPERIMENT_NAME='a6000-nq-search-r1-grpo-qwen2.5-3b-largebatch'
-
-PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
-    data.train_files=data/nq_search/train.json \
-    data.val_files=data/nq_search/test.json \
+# 创建自定义配置文件或修改参数
+python3 -m verl.trainer.main_ppo \
+    --config configs/a6000_grpo.yaml \
+    actor_rollout_ref.model.path=Qwen/Qwen2.5-3B \
     data.train_batch_size=64 \
     data.val_batch_size=32 \
-    data.max_prompt_length=2048 \
-    data.max_response_length=512 \
-    data.max_start_length=1024 \
-    data.max_obs_length=512 \
-    \
-    algorithm.adv_estimator=grpo \
-    \
-    actor_rollout_ref.model.path=$BASE_MODEL \
-    actor_rollout_ref.actor.optim.lr=1e-6 \
-    actor_rollout_ref.actor.ppo_mini_batch_size=32 \
-    actor_rollout_ref.actor.ppo_micro_batch_size=8 \
-    actor_rollout_ref.actor.fsdp_config.param_offload=false \
-    actor_rollout_ref.actor.fsdp_config.grad_offload=false \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=false \
-    \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size=32 \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-    actor_rollout_ref.rollout.name=vllm \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.9 \
-    actor_rollout_ref.rollout.n_agent=10 \
-    actor_rollout_ref.rollout.temperature=1.0 \
-    \
-    actor_rollout_ref.ref.log_prob_micro_batch_size=32 \
-    \
-    trainer.n_gpus_per_node=1 \
-    trainer.total_training_steps=500 \
-    trainer.total_epochs=5 \
-    \
-    max_turns=2 \
-    retriever.url="http://127.0.0.1:8000/retrieve" \
-    retriever.topk=3 \
-    2>&1 | tee $EXPERIMENT_NAME.log
-
-echo "大batch训练完成！"
-EOF
-
-chmod +x train_a6000_large_batch.sh
+    actor_rollout_ref.rollout.n_agent=10
 ```
+
+**配置说明：**
+- 🚀 更大的batch size (64)
+- ⚡ 更多的GRPO agents (10)
+- 💾 最低显存占用 (~35GB)
+- ⏱️ 最快训练时间 (3-4小时)
 
 ### 5.3 三种方案对比
 
@@ -601,124 +450,55 @@ wandb online
 
 set -e
 
-echo "🚀 Search-R1 A6000 优化训练"
-echo "硬件: A6000 (48GB显存)"
-echo "模型: Qwen2.5-7B"
-echo "算法: GRPO"
+echo "🚀 Search-R1 A6000 一键启动"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# ===== 步骤1: 环境检查 =====
-echo "📋 检查环境..."
-if ! nvidia-smi &> /dev/null; then
-    echo "❌ 请确保GPU可用"
-    exit 1
-fi
+# ===== 步骤1: 环境验证 =====
+echo "📋 步骤1: 验证GPU环境..."
+python scripts/verify_gpu.py || exit 1
 
-GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)
-GPU_MEM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader | head -1 | awk '{print $1}')
-
-echo "✅ GPU: $GPU_NAME"
-echo "✅ 显存: $GPU_MEM"
-
-if [ "$GPU_MEM" -lt 40000 ]; then
-    echo "⚠️  警告: 显存可能不足40GB"
-fi
-
-# ===== 步骤2: 检查检索器 =====
-echo "🔍 检查检索器..."
-if curl -s http://127.0.0.1:8000/retrieve &> /dev/null; then
-    echo "✅ 检索器已启动"
-else
-    echo "❌ 检索器未启动，请先启动检索器"
-    echo "运行: bash retrieval_launch.sh"
-    exit 1
-fi
-
-# ===== 步骤3: 检查数据 =====
-echo "📊 检查数据..."
+# ===== 步骤2: 数据准备 =====
+echo ""
+echo "📊 步骤2: 准备数据集..."
 if [ ! -f "data/nq_search/train.json" ]; then
-    echo "❌ 数据文件不存在"
-    echo "请先运行数据准备脚本"
-    exit 1
+    python scripts/data_prepare.py --output_dir data/nq_search
+else
+    echo "✅ 数据已存在，跳过准备"
 fi
 
-TRAIN_SAMPLES=$(wc -l < data/nq_search/train.json)
-TEST_SAMPLES=$(wc -l < data/nq_search/test.json)
-echo "✅ 训练样本: $TRAIN_SAMPLES"
-echo "✅ 测试样本: $TEST_SAMPLES"
+# ===== 步骤3: 索引下载 =====
+echo ""
+echo "🔍 步骤3: 准备检索索引..."
+if [ ! -f "data/index/e5_Flat.index" ]; then
+    python scripts/download_index.py --output_dir data/index
+else
+    echo "✅ 索引已存在，跳过下载"
+fi
 
-# ===== 步骤4: 创建A6000优化配置 =====
-echo "📝 创建A6000训练配置..."
-
-cat > train_a6000_auto.sh << 'EOF'
-#!/bin/bash
-export CUDA_VISIBLE_DEVICES=0
-export BASE_MODEL='Qwen/Qwen2.5-7B'
-export EXPERIMENT_NAME='a6000-auto'
-
-python3 -m verl.trainer.main_ppo \
-    data.train_files=data/nq_search/train.json \
-    data.val_files=data/nq_search/test.json \
-    data.train_batch_size=16 \
-    data.val_batch_size=8 \
-    data.max_prompt_length=2048 \
-    data.max_response_length=512 \
-    data.max_start_length=1024 \
-    data.max_obs_length=512 \
-    \
-    algorithm.adv_estimator=grpo \
-    \
-    actor_rollout_ref.model.path=$BASE_MODEL \
-    actor_rollout_ref.actor.optim.lr=1e-6 \
-    actor_rollout_ref.actor.fsdp_config.grad_offload=true \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=true \
-    \
-    actor_rollout_ref.actor.ppo_mini_batch_size=16 \
-    actor_rollout_ref.actor.ppo_micro_batch_size=4 \
-    actor_rollout_ref.actor.state_masking=true \
-    \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size=16 \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-    actor_rollout_ref.rollout.name=vllm \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.85 \
-    actor_rollout_ref.rollout.n_agent=5 \
-    \
-    trainer.n_gpus_per_node=1 \
-    trainer.total_training_steps=500 \
-    trainer.total_epochs=5 \
-    trainer.logger=['wandb'] \
-    trainer.project_name='Search-R1-A6000' \
-    trainer.experiment_name=$EXPERIMENT_NAME \
-    trainer.default_local_dir=checkpoints/$EXPERIMENT_NAME \
-    \
-    max_turns=2 \
-    retriever.url="http://127.0.0.1:8000/retrieve" \
-    retriever.topk=3 \
-    2>&1 | tee $EXPERIMENT_NAME.log
-EOF
-
-chmod +x train_a6000_auto.sh
+# ===== 步骤4: 启动检索器 =====
+echo ""
+echo "🚀 步骤4: 启动检索服务器..."
+if ! curl -s http://127.0.0.1:8000/retrieve &> /dev/null; then
+    bash scripts/start_retriever.sh
+    echo "⏳ 等待检索器启动..."
+    sleep 10
+else
+    echo "✅ 检索器已运行"
+fi
 
 # ===== 步骤5: 开始训练 =====
-echo "🎯 开始A6000优化训练..."
 echo ""
-echo "📊 配置信息:"
-echo "   - 模型: Qwen2.5-7B"
-echo "   - 算法: GRPO"
-echo "   - batch_size: 16"
-echo "   - n_agent: 5"
-echo "   - 训练步数: 500"
-echo ""
-echo "⏱️  预计时间: 4-5小时"
-echo "💾 预期显存: ~38-42GB"
+echo "🎯 步骤5: 开始A6000优化训练..."
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-./train_a6000_auto.sh
+bash scripts/train_a6000.sh
 
 echo ""
 echo "🎉 训练完成！"
-echo "📊 查看日志: cat a6000-auto.log"
-echo "📁 检查点: ls checkpoints/a6000-auto/"
+echo "📊 查看日志: ls logs/"
+echo "📁 检查点: ls checkpoints/"
 ```
 
 ---
@@ -795,7 +575,39 @@ python -m verl.trainer.main_eval \
 
 ## 10. 总结
 
-### 10.1 A6000配置要点
+### 10.1 重构改进
+
+**改进前：**
+- ❌ 长内联Python命令（113-167行）
+- ❌ 手动索引下载脚本（185-222行）
+- ❌ 超长训练命令行（266-315行）
+- ❌ 代码重复和维护困难
+
+**改进后：**
+- ✅ 专业Python脚本 (`scripts/`)
+- ✅ YAML配置文件 (`configs/`)
+- ✅ 模块化设计
+- ✅ 易于维护和扩展
+
+### 10.2 新增文件结构
+
+```
+Search-R1/
+├── scripts/                          # 训练脚本目录
+│   ├── README.md                     # 脚本使用说明
+│   ├── data_prepare.py              # 数据准备脚本
+│   ├── download_index.py            # 索引下载脚本
+│   ├── verify_gpu.py                # GPU验证脚本
+│   ├── train_a6000.sh               # A6000训练脚本
+│   └── start_retriever.sh          # 检索器启动脚本
+│
+└── configs/                          # 配置文件目录
+    ├── README.md                     # 配置文件说明
+    ├── a6000_grpo.yaml              # 平衡方案配置
+    └── a6000_ppo.yaml               # 激进方案配置
+```
+
+### 10.3 A6000配置要点
 
 | 配置项 | 推荐值 | 原因 |
 |--------|--------|------|
@@ -805,6 +617,7 @@ python -m verl.trainer.main_eval \
 | **序列长度** | 2048 | 支持复杂推理 |
 | **n_agent** | 5 | GRPO组内多样性 |
 | **训练步数** | 500 | 充分训练 |
+| **配置方式** | YAML文件 | 专业、易维护 |
 
 ### 10.2 显存优化总结
 

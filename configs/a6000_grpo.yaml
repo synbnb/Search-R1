@@ -1,0 +1,87 @@
+# Search-R1 A6000 (48GB显存) GRPO训练配置
+# 平衡方案 - Qwen2.5-7B + GRPO算法
+
+# ========== 基础配置 ==========
+defaults:
+  - override hydra/launcher: basic
+
+# ========== 数据配置 ==========
+data:
+  train_files: data/nq_search/train.json
+  val_files: data/nq_search/test.json
+  train_data_num: null  # 使用完整数据集
+  val_data_num: null    # 使用完整数据集
+  train_batch_size: 16
+  val_batch_size: 8
+  max_prompt_length: 2048
+  max_response_length: 512
+  max_start_length: 1024
+  max_obs_length: 512
+  shuffle_train_dataloader: true
+
+# ========== 算法配置 ==========
+algorithm:
+  adv_estimator: grpo  # 使用GRPO算法 (无需Critic网络)
+
+# ========== 模型配置 ==========
+actor_rollout_ref:
+  model:
+    path: Qwen/Qwen2.5-7B
+
+  # Actor优化器配置
+  actor:
+    optim:
+      lr: 1e-6
+      lr_warmup_steps_ratio: 0.2
+
+    # PPO batch配置
+    ppo_mini_batch_size: 16
+    ppo_micro_batch_size: 4
+
+    # FSDP配置 (显存优化)
+    fsdp_config:
+      param_offload: false      # A6000显存充足，不卸载参数
+      grad_offload: true        # 卸载梯度到CPU
+      optimizer_offload: true   # 卸载优化器到CPU
+
+    use_remove_padding: true
+    state_masking: true
+
+  # Rollout配置 (vLLM推理引擎)
+  rollout:
+    log_prob_micro_batch_size: 16
+    tensor_model_parallel_size: 1
+    name: vllm
+    gpu_memory_utilization: 0.85  # vLLM GPU显存利用率
+    n_agent: 5                     # GRPO组内agent数量
+    temperature: 1.0
+
+  # Reference模型配置
+  ref:
+    log_prob_micro_batch_size: 16
+
+# ========== 训练器配置 ==========
+trainer:
+  n_gpus_per_node: 1
+  nnodes: 1
+  save_freq: 50
+  test_freq: 25
+  logger: ['wandb']
+  project_name: Search-R1-A6000
+  experiment_name: a6000-nq-search-r1-grpo-qwen2.5-7b
+  total_epochs: 5
+  total_training_steps: 500
+  default_local_dir: checkpoints/a6000-nq-search-r1-grpo-qwen2.5-7b
+
+# ========== Search-R1特定配置 ==========
+# 多轮对话配置
+max_turns: 2
+
+# 检索器配置
+retriever:
+  url: "http://127.0.0.1:8000/retrieve"
+  topk: 3
+
+# ========== 环境变量 ==========
+# 这些需要在运行脚本中设置
+# CUDA_VISIBLE_DEVICES=0

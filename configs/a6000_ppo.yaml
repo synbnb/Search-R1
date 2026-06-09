@@ -1,0 +1,93 @@
+# Search-R1 A6000 (48GB显存) PPO训练配置
+# 激进方案 - Qwen2.5-7B + 完整PPO算法
+
+# ========== 基础配置 ==========
+defaults:
+  - override hydra/launcher: basic
+
+# ========== 数据配置 ==========
+data:
+  train_files: data/nq_search/train.json
+  val_files: data/nq_search/test.json
+  train_data_num: null
+  val_data_num: null
+  train_batch_size: 16
+  val_batch_size: 8
+  max_prompt_length: 2048
+  max_response_length: 512
+  max_start_length: 1024
+  max_obs_length: 512
+  shuffle_train_dataloader: true
+
+# ========== 算法配置 ==========
+algorithm:
+  adv_estimator: gae  # 使用GAE (PPO算法)
+  kl_ctrl:
+    kl_coef: 0.001   # KL散度系数
+
+# ========== 模型配置 ==========
+actor_rollout_ref:
+  model:
+    path: Qwen/Qwen2.5-7B
+
+  # Actor优化器配置
+  actor:
+    optim:
+      lr: 1e-6
+
+    # PPO batch配置
+    ppo_mini_batch_size: 16
+    ppo_micro_batch_size: 4
+
+    # FSDP配置
+    fsdp_config:
+      param_offload: false
+      grad_offload: true
+      optimizer_offload: true
+
+    state_masking: true
+
+  # Rollout配置
+  rollout:
+    log_prob_micro_batch_size: 16
+    tensor_model_parallel_size: 1
+    name: vllm
+    gpu_memory_utilization: 0.85
+    n_agent: 1  # PPO使用单agent
+    temperature: 1.0
+
+  # Reference模型配置
+  ref:
+    log_prob_micro_batch_size: 16
+
+# ========== Critic网络配置 ==========
+critic:
+  optim:
+    lr: 5e-6
+  model:
+    path: Qwen/Qwen2.5-7B
+    use_remove_padding: true
+    fsdp_config:
+      param_offload: true     # Critic参数卸载
+      grad_offload: true
+      optimizer_offload: true
+  ppo_micro_batch_size: 4
+
+# ========== 训练器配置 ==========
+trainer:
+  critic_warmup: 5           # Critic预热轮数
+  n_gpus_per_node: 1
+  nnodes: 1
+  total_training_steps: 500
+  total_epochs: 10
+  logger: ['wandb']
+  project_name: Search-R1-A6000
+  experiment_name: a6000-nq-search-r1-ppo-qwen2.5-7b
+  default_local_dir: checkpoints/a6000-nq-search-r1-ppo-qwen2.5-7b
+
+# ========== Search-R1特定配置 ==========
+max_turns: 2
+
+retriever:
+  url: "http://127.0.0.1:8000/retrieve"
+  topk: 3
