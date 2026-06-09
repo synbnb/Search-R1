@@ -168,6 +168,7 @@ python3 -m verl.trainer.main_ppo \
 
 ## 📚 相关文档
 
-- [A6000_GUIDE.md](../A6000_GUIDE.md) - A6000优化配置指南
+- [REPRODUCTION_GUIDE.md](../REPRODUCTION_GUIDE.md) - 完整复现指南（推荐）
 - [scripts/README.md](../scripts/README.md) - 脚本使用说明
 - [ARCHITECTURE.md](../ARCHITECTURE.md) - 项目架构文档
+- [CODE_FLOW_ANALYSIS.md](../CODE_FLOW_ANALYSIS.md) - 代码流程分析

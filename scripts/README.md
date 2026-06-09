@@ -210,7 +210,7 @@ lsof -i :8000
 
 ## 📚 相关文档
 
-- [A6000_GUIDE.md](../A6000_GUIDE.md) - A6000优化配置指南
-- [MINIMAL_REPRODUCTION.md](../MINIMAL_REPRODUCTION.md) - 最小化复现指南
+- [REPRODUCTION_GUIDE.md](../REPRODUCTION_GUIDE.md) - 完整复现指南（推荐）
 - [ARCHITECTURE.md](../ARCHITECTURE.md) - 项目架构文档
+- [CODE_FLOW_ANALYSIS.md](../CODE_FLOW_ANALYSIS.md) - 代码流程分析
 - [VERL_INTEGRATION.md](../VERL_INTEGRATION.md) - 框架集成文档

@@ -128,6 +128,38 @@ conda activate searchr1
 bash train_ppo.sh
 ```
 
+**📘 完整复现指南:**
+
+对于更详细的复现说明，包括GPU选择、配置优化和故障排查，请查看：
+
+**[REPRODUCTION_GUIDE.md](REPRODUCTION_GUIDE.md)** - 完整的Search-R1复现指南
+
+该指南包含：
+- 📋 硬件要求和配置方案
+- 🎮 GPU选择和配置
+- 🔧 环境准备和验证
+- 📊 数据和检索器准备
+- 🚀 训练配置和执行
+- 🛠️ 监控和故障排查
+
+**快速命令:**
+```bash
+# 验证环境
+python scripts/verify_gpu.py
+
+# 准备数据
+python scripts/data_prepare.py --output_dir data/nq_search
+
+# 下载索引
+python scripts/download_index.py --output_dir data/index
+
+# 启动检索器
+bash scripts/start_retriever.sh
+
+# 开始训练（选择GPU）
+bash scripts/train_gpu.sh --gpu 0 --config configs/a6000_grpo.yaml
+```
+
 ## Preliminary results
 
 (1) The base model (llama3.2-3b-base) learns to call the search engine and obtain improved performance.

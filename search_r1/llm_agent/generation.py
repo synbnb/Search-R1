@@ -218,104 +218,214 @@ class LLMGenerationManager:
         return padded_output
 
     def run_llm_loop(self, gen_batch, initial_input_ids: torch.Tensor) -> Tuple[Dict, Dict]:
-        """Run main LLM generation loop."""
-        
+        """
+        运行主LLM生成循环 - 实现多轮搜索+推理的核心逻辑
+
+        功能说明：
+        1. 支持多轮对话（最多max_turns轮）
+        2. 每轮可以调用搜索工具获取外部知识
+        3. 跟踪每个样本的活跃状态、搜索次数、轮次统计
+        4. 最终强制所有样本给出答案（不允许搜索）
+
+        Args:
+            gen_batch: 输入批次数据，包含input_ids、attention_mask等
+            initial_input_ids: 初始输入的token ids [batch_size, seq_len]
+
+        Returns:
+            Tuple[Dict, Dict]: 返回最终输出和元信息
+        """
+
+        # ========== 初始化左右两侧状态 ==========
+        # 左侧：固定不变的原始prompt（用于最终输出时保留问题）
+        # 截取最后max_start_length个token作为左侧固定部分
         original_left_side = {'input_ids': initial_input_ids[:, -self.config.max_start_length:]}
+
+        # 右侧：动态增长的响应部分（包含模型生成的所有内容）
+        # 初始化为空tensor，逐步追加模型的响应和检索结果
         original_right_side = {'responses': initial_input_ids[:, []], 'responses_with_info_mask': initial_input_ids[:, []]}
-        
+
+        # ========== 初始化追踪状态 ==========
+        # active_mask: 标记哪些样本还在活跃状态（未完成）
+        # True表示该样本仍在进行中，False表示已完成（已给出答案）
         active_mask = torch.ones(gen_batch.batch['input_ids'].shape[0], dtype=torch.bool)
+
+        # turns_stats: 统计每个样本经历的轮次（初始为1，表示第一轮）
         turns_stats = torch.ones(gen_batch.batch['input_ids'].shape[0], dtype=torch.int)
+
+        # valid_action_stats: 统计每个样本的有效动作次数（搜索或答案）
         valid_action_stats = torch.zeros(gen_batch.batch['input_ids'].shape[0], dtype=torch.int)
+
+        # valid_search_stats: 统计每个样本的有效搜索次数
         valid_search_stats = torch.zeros(gen_batch.batch['input_ids'].shape[0], dtype=torch.int)
+
+        # active_num_list: 记录每轮结束后仍活跃的样本数量（用于监控训练进度）
         active_num_list = [active_mask.sum().item()]
+
+        # rollings: 当前的滚动状态，包含所有样本的对话历史
         rollings = gen_batch
 
-        # Main generation loop
+        # ========== 主生成循环：支持多轮搜索 ==========
+        # 每轮：模型生成 → 判断动作（搜索/答案）→ 执行动作 → 更新状态
         for step in range(self.config.max_turns):
+            # 如果所有样本都已完成（给出答案），提前结束循环
             if not active_mask.sum():
                 break
+
+            # 优化：将批次数据裁剪到有效长度，去除多余的padding
+            # 这样可以减少计算量，提高生成效率
             rollings.batch = self.tensor_fn.cut_to_effective_len(
                 rollings.batch,
                 keys=['input_ids', 'attention_mask', 'position_ids']
             )
-            
-            # gen_output = self.actor_rollout_wg.generate_sequences(rollings)
+
+            # ========== 提取活跃样本进行生成 ==========
+            # 只对仍活跃的样本进行生成，已完成的样本不参与计算
+            # 使用active_mask过滤rollings中的活跃样本
             rollings_active = DataProto.from_dict({
                 k: v[active_mask] for k, v in rollings.batch.items()
-            })            
+            })
+
+            # 调用生成模型，使用GPU padding优化（处理多GPU场景）
+            # 返回的gen_output包含模型生成的responses
             gen_output = self._generate_with_gpu_padding(rollings_active)
 
-            meta_info = gen_output.meta_info            
+            # 提取元信息（包含生成过程的统计数据）
+            meta_info = gen_output.meta_info
+
+            # ========== 后处理模型响应 ==========
+            # _postprocess_responses: 确保响应在</search>或</answer>处截断
+            # 返回token ids和字符串两种格式
             responses_ids, responses_str = self._postprocess_responses(gen_output.batch['responses'])
+
+            # 将活跃样本的响应对齐到完整批次维度
+            # 非活跃样本的位置用padding填充
             responses_ids, responses_str = self.tensor_fn._example_level_pad(responses_ids, responses_str, active_mask)
 
-            # Execute in environment and process observations
+            # ========== 执行预测动作（环境交互） ==========
+            # execute_predictions: 解析模型输出，执行搜索或答案动作
+            # 返回：
+            # - next_obs: 环境返回的观察（检索结果或空字符串）
+            # - dones: 是否完成（给出答案后为True）
+            # - valid_action: 动作是否有效（search或answer为有效，无效动作返回惩罚）
+            # - is_search: 是否为搜索动作
             next_obs, dones, valid_action, is_search = self.execute_predictions(
-                responses_str, self.tokenizer.pad_token, active_mask
+                responses_str,           # 模型生成的响应字符串
+                self.tokenizer.pad_token, # padding token
+                active_mask              # 活跃样本掩码
             )
-            
+
+            # ========== 更新活跃状态 ==========
+            # curr_active_mask: 当前这轮完成后仍活跃的样本
+            # 如果样本给出了答案（done=True），则不再活跃
             curr_active_mask = torch.tensor([not done for done in dones], dtype=torch.bool)
+
+            # 更新全局active_mask：只有既在之前活跃，又在当前活跃的样本才保持活跃
+            # 使用逐元素与运算（相当于集合交集）
             active_mask = active_mask * curr_active_mask
+
+            # 记录当前活跃样本数量，用于监控训练进度
             active_num_list.append(active_mask.sum().item())
+
+            # ========== 更新统计信息 ==========
+            # turns_stats: 对当前活跃样本的轮次+1
             turns_stats[curr_active_mask] += 1
+
+            # valid_action_stats: 累加有效动作次数
             valid_action_stats += torch.tensor(valid_action, dtype=torch.int)
+
+            # valid_search_stats: 累加搜索次数
             valid_search_stats += torch.tensor(is_search, dtype=torch.int)
 
+            # ========== 处理观察结果 ==========
+            # 将字符串格式的观察（检索结果）转换为token ids
+            # 如果超过max_obs_length则截断
             next_obs_ids = self._process_next_obs(next_obs)
-            
-            # Update states
+
+            # ========== 更新滚动状态 ==========
+            # rollings: 用于下一轮生成的完整输入（prompt + 响应 + 观察）
+            # 包含所有历史对话，用于模型理解上下文
             rollings = self._update_rolling_state(
-                rollings,
-                responses_ids,
-                next_obs_ids
+                rollings,        # 当前滚动状态
+                responses_ids,   # 模型生成的响应token ids
+                next_obs_ids     # 环境返回的观察token ids（检索结果）
             )
+
+            # original_right_side: 用于最终输出的右侧响应
+            # 分别保存responses和带info_mask的版本（用于信息遮蔽训练）
             original_right_side = self._update_right_side(
-                original_right_side,
-                responses_ids,
-                next_obs_ids
+                original_right_side,  # 当前右侧状态
+                responses_ids,        # 新增的响应
+                next_obs_ids          # 新增的观察
             )
-            
-        # final LLM rollout
+
+        # ========== 最终LLM生成（强制给出答案） ==========
+        # 对于经过max_turns轮仍没有给出答案的样本，强制生成答案
+        # do_search=False：不允许搜索，必须给出最终答案
         if active_mask.sum():
+            # 优化：裁剪到有效长度
             rollings.batch = self.tensor_fn.cut_to_effective_len(
                 rollings.batch,
                 keys=['input_ids', 'attention_mask', 'position_ids']
             )
 
-            # gen_output = self.actor_rollout_wg.generate_sequences(rollings)
+            # 提取仍活跃的样本（未完成答案的样本）
             rollings_active = DataProto.from_dict({
                 k: v[active_mask] for k, v in rollings.batch.items()
-            })            
+            })
+
+            # 生成最终答案（不允许搜索）
             gen_output = self._generate_with_gpu_padding(rollings_active)
 
-            meta_info = gen_output.meta_info            
+            # 提取元信息
+            meta_info = gen_output.meta_info
+
+            # 后处理响应（确保在</answer>处截断）
             responses_ids, responses_str = self._postprocess_responses(gen_output.batch['responses'])
             responses_ids, responses_str = self.tensor_fn._example_level_pad(responses_ids, responses_str, active_mask)
 
-            # # Execute in environment and process observations
+            # ========== 执行最终预测（不允许搜索） ==========
+            # do_search=False：强制给出答案，不执行搜索操作
+            # 返回dones（所有样本都完成）、valid_action、is_search（都为0）
             _, dones, valid_action, is_search = self.execute_predictions(
-                responses_str, self.tokenizer.pad_token, active_mask, do_search=False
+                responses_str,            # 最终答案
+                self.tokenizer.pad_token,
+                active_mask,
+                do_search=False          # 关键：不允许搜索
             )
 
+            # 更新活跃状态（所有样本都应该完成）
             curr_active_mask = torch.tensor([not done for done in dones], dtype=torch.bool)
             active_mask = active_mask * curr_active_mask
+
+            # 记录最终活跃样本数量
             active_num_list.append(active_mask.sum().item())
+
+            # 更新统计信息
             valid_action_stats += torch.tensor(valid_action, dtype=torch.int)
             valid_search_stats += torch.tensor(is_search, dtype=torch.int)
-            
 
+            # 更新右侧状态（添加最终答案）
             original_right_side = self._update_right_side(
                 original_right_side,
-                responses_ids,
+                responses_ids,       # 最终答案的token ids
+                # 注意：这里没有next_obs_ids，因为最终答案不涉及检索
             )
-        
-        meta_info['turns_stats'] = turns_stats.tolist()
-        meta_info['active_mask'] = active_mask.tolist()
-        meta_info['valid_action_stats'] = valid_action_stats.tolist()
-        meta_info['valid_search_stats'] = valid_search_stats.tolist()
-        
+
+        # ========== 收集元信息 ==========
+        # 将统计信息转换为列表格式，便于记录和监控
+        meta_info['turns_stats'] = turns_stats.tolist()           # 每个样本的轮次
+        meta_info['active_mask'] = active_mask.tolist()           # 最终活跃状态
+        meta_info['valid_action_stats'] = valid_action_stats.tolist()  # 有效动作统计
+        meta_info['valid_search_stats'] = valid_search_stats.tolist()  # 搜索次数统计
+
+        # 打印活跃轨迹数量（用于调试和监控训练进度）
+        # 输出格式：[初始数, 第1轮后, 第2轮后, ..., 最终数]
         print("ACTIVE_TRAJ_NUM:", active_num_list)
-        
+
+        # ========== 组装最终输出 ==========
+        # 将左右两侧组合成完整的输出格式
+        # 左侧：原始问题（固定）
+        # 右侧：所有响应和检索结果（动态增长）
         return self._compose_final_output(original_left_side, original_right_side, meta_info)
 
     def _compose_final_output(self, left_side: Dict,
