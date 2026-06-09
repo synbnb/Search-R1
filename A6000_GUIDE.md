@@ -17,9 +17,16 @@ python scripts/download_index.py --output_dir data/index
 # 4. 启动检索器
 bash scripts/start_retriever.sh
 
-# 5. 开始训练
-bash scripts/train_a6000.sh
+# 5. 开始训练（选择GPU）
+bash scripts/train_gpu.sh --gpu 0          # 使用GPU 0
+bash scripts/train_gpu.sh --gpu 1          # 使用GPU 1
+bash scripts/train_gpu.sh --gpu 0,1        # 使用GPU 0和1
 ```
+
+**💡 GPU选择提示：**
+- 使用 `nvidia-smi` 查看可用GPU
+- 使用 `bash scripts/train_gpu.sh --help` 查看所有选项
+- 详见 [GPU_SELECTION_GUIDE.md](GPU_SELECTION_GUIDE.md)
 
 ## 📚 目录
 - [1. A6000硬件优势](#1-a6000硬件优势)

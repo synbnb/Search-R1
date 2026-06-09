@@ -65,17 +65,45 @@ python scripts/verify_gpu.py
 ### 训练脚本
 
 #### `train_a6000.sh`
-**功能：** A6000优化的GRPO训练脚本
+**功能：** A6000优化的GRPO训练脚本（使用GPU 0）
 
 **用法：**
 ```bash
 bash scripts/train_a6000.sh
 ```
 
+#### `train_gpu.sh` ⭐ 推荐
+**功能：** 灵活的GPU训练脚本，支持自定义GPU选择
+
+**用法：**
+```bash
+# 使用默认GPU (GPU 0)
+bash scripts/train_gpu.sh
+
+# 指定GPU
+bash scripts/train_gpu.sh --gpu 1
+
+# 使用多个GPU
+bash scripts/train_gpu.sh --gpu 0,1,2
+
+# 完整自定义
+bash scripts/train_gpu.sh --gpu 2 --config configs/a6000_ppo.yaml --name my-experiment
+```
+
+**参数说明：**
+- `--gpu GPU_ID`: 指定GPU设备ID（支持多个，用逗号分隔）
+- `--config CONFIG_FILE`: 指定配置文件
+- `--data DATA_DIR`: 指定数据目录
+- `--model MODEL_PATH`: 指定模型路径
+- `--name EXPERIMENT_NAME`: 指定实验名称
+- `--help`: 显示帮助信息
+
 **特点：**
-- 使用YAML配置文件 (`configs/a6000_grpo.yaml`)
+- 支持灵活的GPU选择
+- 使用YAML配置文件
 - 自动检查前置条件
 - 详细的配置信息显示
+- 彩色输出和错误提示
 - 自动管理日志和检查点
 
 **前置条件：**

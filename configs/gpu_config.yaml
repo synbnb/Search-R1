@@ -1,0 +1,56 @@
+# GPU配置文件
+# 用于设置训练时使用的GPU设备
+
+# ========== GPU设备选择 ==========
+# 单GPU训练
+# gpu_id: 0
+
+# 多GPU训练 (使用逗号分隔)
+# gpu_id: 0,1,2,3
+
+# 特定GPU训练
+gpu_id: 0
+
+# ========== GPU配置选项 ==========
+# 可用的GPU配置预设
+presets:
+  # 单GPU A6000训练
+  a6000_single:
+    gpu_id: 0
+    description: "单张A6000训练 (48GB显存)"
+
+  # 双GPU A6000训练
+  a6000_dual:
+    gpu_id: 0,1
+    description: "双A6000训练 (96GB总显存)"
+
+  # 四GPU A6000训练
+  a6000_quad:
+    gpu_id: 0,1,2,3
+    description: "四A6000训练 (192GB总显存)"
+
+  # 使用特定GPU (如GPU 2)
+  gpu_2:
+    gpu_id: 2
+    description: "使用GPU 2"
+
+# ========== GPU内存配置 ==========
+# 根据GPU数量自动调整的配置
+auto_scaling:
+  # 单GPU配置
+  1:
+    batch_size: 16
+    n_agent: 5
+    micro_batch_size: 4
+
+  # 双GPU配置
+  2:
+    batch_size: 32
+    n_agent: 10
+    micro_batch_size: 8
+
+  # 四GPU配置
+  4:
+    batch_size: 64
+    n_agent: 20
+    micro_batch_size: 16
